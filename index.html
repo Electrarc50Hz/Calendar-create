@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>全平台日历生成器</title>
+    <script src="https://unpkg.com/docx@8.5.0/build/index.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <style>
+        :root {
+            --primary-color: #007bff;
+            --bg-color: #f8f9fa;
+        }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: var(--bg-color);
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+        .container {
+            background: white;
+            padding: 24px;
+            border-radius: 12px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+            width: 90%;
+            max-width: 400px; /* 电脑端限制宽度 */
+            text-align: center;
+        }
+        h2 { margin-bottom: 20px; font-size: 1.5rem; color: #333; }
+        
+        /* 响应式表单布局 */
+        .select-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        select {
+            flex: 1;
+            padding: 12px;
+            font-size: 16px; /* 防止 iOS 自动放大 */
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            appearance: none;
+            background-color: white;
+        }
+        
+        button {
+            width: 100%;
+            padding: 14px;
+            font-size: 16px;
+            font-weight: bold;
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            -webkit-tap-highlight-color: transparent;
+            transition: opacity 0.2s;
+        }
+        button:active { opacity: 0.8; }
+
+        /* 针对电脑端的微调 */
+        @media (min-width: 768px) {
+            button:hover { background-color: #0056b3; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>📅 日历文档生成</h2>
+    <div class="select-group">
+        <select id="yearSelect"></select>
+        <select id="monthSelect"></select>
+    </div>
+    <button id="downloadBtn">生成并下载 Word</button>
+    <p id="status" style="font-size: 12px; color: #888; margin-top: 10px;"></p>
+</div>
+
+<script>
+    const yearSelect = document.getElementById('yearSelect');
+    const monthSelect = document.getElementById('monthSelect');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const statusText = document.getElementById('status');
+
+    // 1. 初始化下拉框
+    const currentYear = new Date().getFullYear();
+    for (let i = currentYear - 5; i <= currentYear + 10; i++) {
+        yearSelect.add(new Option(i + '年', i, i === currentYear, i === currentYear));
+    }
+    for (let i = 1; i <= 12; i++) {
+        const curM = new Date().getMonth() + 1;
+        monthSelect.add(new Option(i + '月', i, i === curM, i === curM));
+    }
+
+    // 2. 生成逻辑
+    async function generateDoc() {
+        try {
+            statusText.innerText = "正在生成中...";
+            const { Document, Packer, Paragraph, Table, TableRow, TableCell, WidthType, AlignmentType, VerticalAlign, TextRun, HeadingLevel } = docx;
+
+            const year = parseInt(yearSelect.value);
+            const month = parseInt(monthSelect.value);
+
+            // 日期计算逻辑 (同前)
+            const firstDay = new Date(year, month - 1, 1).getDay();
+            const daysInMonth = new Date(year, month, 0).getDate();
+            const weeks = [];
+            let week = new Array(7).fill("");
+            let dayCounter = 1;
+            for (let i = firstDay; i < 7; i++) week[i] = dayCounter++;
+            weeks.push(week);
+            while (dayCounter <= daysInMonth) {
+                week = new Array(7).fill("");
+                for (let i = 0; i < 7 && dayCounter <= daysInMonth; i++) week[i] = dayCounter++;
+                weeks.push(week);
+            }
+
+            const tableRows = [
+                new TableRow({
+                    children: ["日", "一", "二", "三", "四", "五", "六"].map(day => 
+                        new TableCell({
+                            children: [new Paragraph({ text: day, alignment: AlignmentType.CENTER })],
+                            shading: { fill: "F2F2F2" }
+                        })
+                    )
+                })
+            ];
+
+            weeks.forEach(w => {
+                tableRows.push(new TableRow({
+                    children: w.map(date => new TableCell({
+                        children: [new Paragraph({ children: [new TextRun({ text: date.toString() })] })],
+                        width: { size: 14.28, type: WidthType.PERCENTAGE },
+                        height: { value: 1000, type: 'atLeast' }
+                    }))
+                }));
+            });
+
+            const doc = new Document({
+                sections: [{
+                    children: [
+                        new Paragraph({ text: `${year}年 ${month}月`, heading: HeadingLevel.HEADING_1, alignment: AlignmentType.CENTER }),
+                        new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: tableRows })
+                    ]
+                }]
+            });
+
+            // 3. 跨平台下载处理
+            const blob = await Packer.toBlob(doc);
+            const fileName = `Calendar_${year}_${month}.docx`;
+
+            // 判断环境
+            const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
+            if (isMobile) {
+                // 手机端：创建一个临时链接并模拟点击，这在大多数手机浏览器更稳定
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const url = e.target.result;
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = fileName;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                };
+                reader.readAsDataURL(blob);
+            } else {
+                // 电脑端：使用 FileSaver
+                saveAs(blob, fileName);
+            }
+            
+            statusText.innerText = "生成成功！请检查下载列表";
+        } catch (err) {
+            statusText.innerText = "生成失败，请刷新重试";
+            console.error(err);
+        }
+    }
+
+    downloadBtn.addEventListener('click', generateDoc);
+</script>
+
+</body>
+</html>
